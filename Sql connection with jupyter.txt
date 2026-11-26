@@ -1,0 +1,411 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Connecting SQL to Jupyter Notebook\n",
+    "**Dataset:** `aviation_sample.csv`\n",
+    "\n",
+    "We will use **SQLite** (built into Python - no installation needed) to learn the full flow. Section 9 shows the same idea for **MySQL / PostgreSQL**.\n",
+    "\n",
+    "1. Connect to a database\n",
+    "2. Load a CSV into a SQL table\n",
+    "3. Run queries with a cursor\n",
+    "4. Run queries straight into a pandas DataFrame\n",
+    "5. Filter, group, sort\n",
+    "6. JOIN two tables\n",
+    "7. Insert / Update / Delete\n",
+    "8. Plot SQL results with matplotlib\n",
+    "9. Connect to MySQL / PostgreSQL\n",
+    "10. Close the connection"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import sqlite3\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "%matplotlib inline"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. Connect to a database\n",
+    "If `aviation.db` does not exist, SQLite creates it for you."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "conn = sqlite3.connect(\"aviation.db\")\n",
+    "cursor = conn.cursor()\n",
+    "print(\"Connected!\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. Load the CSV into a SQL table\n",
+    "`df.to_sql()` creates the table and inserts every row."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df = pd.read_csv(\"aviation_sample.csv\")\n",
+    "df.to_sql(\"passengers\", conn, if_exists=\"replace\", index=False)\n",
+    "print(f\"{len(df)} rows written to table 'passengers'\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# which tables exist in this database?\n",
+    "cursor.execute(\"SELECT name FROM sqlite_master WHERE type = 'table';\")\n",
+    "print(cursor.fetchall())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. Run a query with the cursor\n",
+    "`execute()` sends the SQL, `fetchall()` / `fetchone()` / `fetchmany(n)` get the rows."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "cursor.execute(\"SELECT * FROM passengers LIMIT 5;\")\n",
+    "for row in cursor.fetchall():\n",
+    "    print(row)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# column names of the table\n",
+    "cursor.execute(\"PRAGMA table_info(passengers);\")\n",
+    "for col in cursor.fetchall():\n",
+    "    print(col[1], \"-\", col[2])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. Query straight into a DataFrame\n",
+    "`pd.read_sql_query()` is the easiest way - the result is a normal DataFrame."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "pd.read_sql_query(\"SELECT * FROM passengers LIMIT 5;\", conn)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. Filter, group and sort"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# WHERE - business class customers older than 50\n",
+    "query = '''\n",
+    "SELECT CustomerID, Age, Class, Flight_Distance\n",
+    "FROM passengers\n",
+    "WHERE Class = 'Business' AND Age > 50\n",
+    "ORDER BY Flight_Distance DESC\n",
+    "LIMIT 10;\n",
+    "'''\n",
+    "pd.read_sql_query(query, conn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# GROUP BY - customers and average distance per class\n",
+    "query = '''\n",
+    "SELECT Class,\n",
+    "       COUNT(*)                         AS customers,\n",
+    "       ROUND(AVG(Flight_Distance), 1)   AS avg_distance,\n",
+    "       ROUND(AVG(DepartureDelayin_Mins), 1) AS avg_departure_delay\n",
+    "FROM passengers\n",
+    "GROUP BY Class\n",
+    "ORDER BY customers DESC;\n",
+    "'''\n",
+    "pd.read_sql_query(query, conn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Loyal vs disloyal - total flight distance (same idea as the dashboard cards)\n",
+    "query = '''\n",
+    "SELECT Customer_Type, SUM(Flight_Distance) AS total_distance\n",
+    "FROM passengers\n",
+    "GROUP BY Customer_Type;\n",
+    "'''\n",
+    "pd.read_sql_query(query, conn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# HAVING - only classes with more than 100 delayed arrivals (delay > 15 mins)\n",
+    "query = '''\n",
+    "SELECT Class, COUNT(*) AS delayed_flights\n",
+    "FROM passengers\n",
+    "WHERE ArrivalDelayin_Mins > 15\n",
+    "GROUP BY Class\n",
+    "HAVING COUNT(*) > 100;\n",
+    "'''\n",
+    "pd.read_sql_query(query, conn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Safe way to pass values: use ? placeholders (never build SQL with f-strings from user input)\n",
+    "query = \"SELECT COUNT(*) AS total FROM passengers WHERE Class = ? AND Age > ?;\"\n",
+    "pd.read_sql_query(query, conn, params=(\"Business\", 30))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 6. JOIN two tables\n",
+    "We create a small lookup table and join it with `passengers`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "class_info = pd.DataFrame({\n",
+    "    \"Class\": [\"Business\", \"Eco\", \"Eco Plus\"],\n",
+    "    \"Seat_Type\": [\"Lie-flat\", \"Standard\", \"Extra legroom\"],\n",
+    "    \"Base_Fare\": [450, 120, 180],\n",
+    "})\n",
+    "class_info.to_sql(\"class_info\", conn, if_exists=\"replace\", index=False)\n",
+    "\n",
+    "query = '''\n",
+    "SELECT p.Class, c.Seat_Type, COUNT(*) AS customers, c.Base_Fare * COUNT(*) AS estimated_revenue\n",
+    "FROM passengers p\n",
+    "JOIN class_info c ON p.Class = c.Class\n",
+    "GROUP BY p.Class, c.Seat_Type, c.Base_Fare;\n",
+    "'''\n",
+    "pd.read_sql_query(query, conn)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 7. Insert / Update / Delete\n",
+    "After changing data you must call `conn.commit()` to save it."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# INSERT\n",
+    "cursor.execute(\n",
+    "    \"INSERT INTO passengers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);\",\n",
+    "    (99999, \"Female\", \"Loyal Customer\", 29, \"Business travel\", \"Business\", 1500, 10, 12),\n",
+    ")\n",
+    "conn.commit()\n",
+    "pd.read_sql_query(\"SELECT * FROM passengers WHERE CustomerID = 99999;\", conn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# UPDATE\n",
+    "cursor.execute(\"UPDATE passengers SET Age = 30 WHERE CustomerID = 99999;\")\n",
+    "conn.commit()\n",
+    "pd.read_sql_query(\"SELECT CustomerID, Age FROM passengers WHERE CustomerID = 99999;\", conn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# DELETE\n",
+    "cursor.execute(\"DELETE FROM passengers WHERE CustomerID = 99999;\")\n",
+    "conn.commit()\n",
+    "print(\"Rows deleted:\", cursor.rowcount)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 8. Plot SQL results with matplotlib\n",
+    "SQL does the aggregation, matplotlib draws the chart."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "query = '''\n",
+    "SELECT Class, ROUND(AVG(DepartureDelayin_Mins), 1) AS avg_delay\n",
+    "FROM passengers\n",
+    "GROUP BY Class;\n",
+    "'''\n",
+    "result = pd.read_sql_query(query, conn)\n",
+    "\n",
+    "plt.figure(figsize=(6, 4))\n",
+    "bars = plt.bar(result[\"Class\"], result[\"avg_delay\"], color=\"#1E90FF\")\n",
+    "plt.bar_label(bars)\n",
+    "plt.title(\"Average Departure Delay by Class (from SQL)\")\n",
+    "plt.ylabel(\"Minutes\")\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 9. Connect to MySQL / PostgreSQL\n",
+    "The idea is the same; only the connection string changes. These cells need a running server, so they are wrapped in `try / except` and will not break the notebook if you do not have one.\n",
+    "\n",
+    "Install first (in a terminal):\n",
+    "```\n",
+    "pip install sqlalchemy pymysql          # MySQL\n",
+    "pip install sqlalchemy psycopg2-binary  # PostgreSQL\n",
+    "```"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "try:\n",
+    "    from sqlalchemy import create_engine\n",
+    "\n",
+    "    # format: mysql+pymysql://USER:PASSWORD@HOST:PORT/DATABASE\n",
+    "    engine = create_engine(\"mysql+pymysql://root:YOUR_PASSWORD@localhost:3306/aviation_db\")\n",
+    "\n",
+    "    df.to_sql(\"passengers\", engine, if_exists=\"replace\", index=False)\n",
+    "    print(pd.read_sql_query(\"SELECT Class, COUNT(*) AS customers FROM passengers GROUP BY Class;\", engine))\n",
+    "except Exception as e:\n",
+    "    print(\"MySQL part skipped ->\", type(e).__name__)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# PostgreSQL: only the connection string changes\n",
+    "# engine = create_engine(\"postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/aviation_db\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 10. Close the connection\n",
+    "Always close when you are done."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "cursor.close()\n",
+    "conn.close()\n",
+    "print(\"Connection closed\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Practice ideas\n",
+    "1. Find the 5 customers with the longest `Flight_Distance`.\n",
+    "2. Count customers by `Type_of_Travel` and `Gender`.\n",
+    "3. Calculate the average age of loyal vs disloyal customers.\n",
+    "4. Plot the result of question 3 as a bar chart."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
